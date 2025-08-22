@@ -201,14 +201,13 @@ def get_fear_greed_index():
     except Exception:
         return 50, "Neutral"
 
-def calculate_portfolio_value(portfolio, df):
+# MODIFIED FUNCTION to accept the price_lookup dictionary for efficiency
+def calculate_portfolio_value(portfolio, price_lookup):
     """Calculates the total value of the user's portfolio."""
     total_value = 0
     for holding in portfolio:
-        coin_data = df[df['Symbol'] == holding['symbol']]
-        if not coin_data.empty:
-            current_price = coin_data['Price'].iloc[0]
-            total_value += holding['amount'] * current_price
+        current_price = price_lookup.get(holding['symbol'], 0) # Use fast lookup, default to 0
+        total_value += holding['amount'] * current_price
     return total_value
 
 def get_gemini_analysis(prompt, market_data):
@@ -349,12 +348,14 @@ global_metrics = get_global_metrics()
 fear_greed_value, fear_greed_text = get_fear_greed_index()
 
 if df is not None:
-    # Check for triggered alerts
+    # !!! MODIFICATION 1: Create a price lookup dictionary for O(1) access !!!
+    price_lookup = df.set_index('Symbol')['Price'].to_dict()
+
+    # !!! MODIFICATION 2: Check for triggered alerts using the fast price_lookup dictionary !!!
     for alert in st.session_state.price_alerts:
         if not alert['triggered']:
-            current_data = df[df['Symbol'] == alert['symbol']]
-            if not current_data.empty:
-                current_price = current_data['Price'].iloc[0]
+            current_price = price_lookup.get(alert['symbol'])
+            if current_price is not None:
                 should_trigger = (
                     (alert['type'] == 'Above' and current_price >= alert['price']) or
                     (alert['type'] == 'Below' and current_price <= alert['price'])
@@ -458,7 +459,8 @@ if df is not None:
     if st.session_state.portfolio:
         st.subheader("💼 Portfolio Performance")
         
-        portfolio_value = calculate_portfolio_value(st.session_state.portfolio, df)
+        # !!! MODIFICATION 3: Call the updated function with the price_lookup dictionary !!!
+        portfolio_value = calculate_portfolio_value(st.session_state.portfolio, price_lookup)
         portfolio_cost = sum([h['amount'] * h['purchase_price'] for h in st.session_state.portfolio])
         portfolio_pnl = portfolio_value - portfolio_cost
         portfolio_pnl_pct = (portfolio_pnl / portfolio_cost * 100) if portfolio_cost > 0 else 0
@@ -470,10 +472,10 @@ if df is not None:
         col4.metric("Holdings", len(st.session_state.portfolio))
         
         portfolio_details = []
+        # !!! MODIFICATION 4: Use the price_lookup dictionary to build portfolio details !!!
         for holding in st.session_state.portfolio:
-            coin_data = df[df['Symbol'] == holding['symbol']]
-            if not coin_data.empty:
-                current_price = coin_data['Price'].iloc[0]
+            current_price = price_lookup.get(holding['symbol'])
+            if current_price is not None:
                 current_value = holding['amount'] * current_price
                 pnl = current_value - (holding['amount'] * holding['purchase_price'])
                 pnl_pct = (pnl / (holding['amount'] * holding['purchase_price']) * 100) if holding['purchase_price'] > 0 else 0
@@ -1043,4 +1045,3 @@ else:
     if st.button("🔄 Retry Connection"):
         st.cache_data.clear()
         st.rerun()
-
